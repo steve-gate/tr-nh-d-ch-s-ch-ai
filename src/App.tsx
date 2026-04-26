@@ -54,13 +54,17 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [editingText, setEditingText] = useState("");
-  const [errorNotification, setErrorNotification] = useState<{message: string, index: number} | null>(null);
+  const [notification, setNotification] = useState<{message: string, type: 'error' | 'success' | 'info', index?: number} | null>(null);
 
   const translatedCount = pages.filter(p => p.translatedText).length;
   const overallProgress = pages.length > 0 ? (translatedCount / pages.length) * 100 : 0;
 
   const translateQueueRef = useRef<number[]>([]);
   const isCurrentlyTranslatingRef = useRef(0); // Changed to counter for concurrency
+
+  const triggerNotification = (message: string, type: 'error' | 'success' | 'info' = 'error', index?: number) => {
+    setNotification({ message, type, index });
+  };
 
   // Load saved books
   useEffect(() => {
@@ -89,7 +93,7 @@ export default function App() {
         setCurrentPage(0);
       } catch (err) {
         console.error("PDF Extraction failed", err);
-        alert("Không thể đọc file PDF. Vui lòng thử lại với file khác.");
+        triggerNotification("Không thể đọc file PDF. Vui lòng thử lại với file khác.", 'error');
         setState('upload');
       }
     }
@@ -106,9 +110,10 @@ export default function App() {
       if (format === 'pdf') await exportToPdf(title, pagesToExport);
       else if (format === 'epub') await exportToEpub(title, pagesToExport);
       else if (format === 'txt') await exportToTxt(title, pagesToExport);
+      triggerNotification(`Đã xuất file ${format.toUpperCase()} thành công!`, 'success');
     } catch (err) {
       console.error("Export failed", err);
-      alert("Xuất file thất bại.");
+      triggerNotification(`Xuất file ${format.toUpperCase()} thất bại.`, 'error');
     } finally {
       setIsExporting(null);
     }
@@ -129,10 +134,10 @@ export default function App() {
       // Refresh list
       const books = await getAllBooks();
       setSavedBooks(books.sort((a, b) => b.timestamp - a.timestamp));
-      alert("Đã lưu vào thư viện!");
+      triggerNotification("Đã lưu vào thư viện thành công!", 'success');
     } catch (err) {
       console.error("Save failed", err);
-      alert("Không thể lưu sách. Có thể do giới hạn bộ nhớ.");
+      triggerNotification("Không thể lưu sách. Có thể do giới hạn bộ nhớ.", 'error');
     } finally {
       setIsSaving(false);
     }
@@ -146,6 +151,7 @@ export default function App() {
     setState('reader');
     setViewMode('split');
     setCurrentPage(0);
+    triggerNotification(`Đã mở: ${book.name}`, 'info');
   };
 
   const handleDeleteBook = async (id: string | null, e: React.MouseEvent) => {
@@ -167,9 +173,10 @@ export default function App() {
           setFile(null);
           setState('library');
         }
+        triggerNotification("Đã xóa sách khỏi thư viện", 'info');
       } catch (err) {
         console.error("Delete failed", err);
-        alert("Không thể xóa sách. Vui lòng thử lại.");
+        triggerNotification("Không thể xóa sách. Vui lòng thử lại.", 'error');
       }
     }
   };
@@ -184,10 +191,10 @@ export default function App() {
         setFile(null);
         setCurrentBookId(null);
         setState('upload');
-        alert("Đã xóa toàn bộ dữ liệu Storage và đặt lại ứng dụng thành công.");
+        triggerNotification("Đã đặt lại toàn bộ ứng dụng", 'success');
       } catch (err) {
         console.error("Clear storage failed", err);
-        alert("Có lỗi xảy ra khi xóa dữ liệu.");
+        triggerNotification("Có lỗi xảy ra khi xóa dữ liệu.", 'error');
       }
     }
   };
@@ -198,7 +205,7 @@ export default function App() {
       .filter(i => i !== -1);
     
     if (errorIndices.length === 0) {
-      alert("Không có trang nào bị lỗi dịch.");
+      triggerNotification("Không có trang nào bị lỗi dịch.", 'info');
       return;
     }
 
@@ -218,6 +225,7 @@ export default function App() {
 
   const saveEdit = (index: number) => {
     setPages(prev => prev.map((p, i) => i === index ? { ...p, translatedText: editingText, isEditing: false } : p));
+    triggerNotification("Đã cập nhật bản dịch", 'success');
   };
 
   const cancelEdit = (index: number) => {
@@ -225,11 +233,11 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (errorNotification) {
-      const timer = setTimeout(() => setErrorNotification(null), 5000);
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 5000);
       return () => clearTimeout(timer);
     }
-  }, [errorNotification]);
+  }, [notification]);
 
   // Translation worker
   useEffect(() => {
@@ -255,16 +263,23 @@ export default function App() {
             translatedText: result, 
             isTranslating: false 
           } : p));
-        } catch (err) {
+        } catch (err: any) {
+          const isQuotaExceeded = err?.message?.includes("429") || 
+                                  err?.message?.includes("RESOURCE_EXHAUSTED") ||
+                                  err?.message?.includes("Quota exceeded");
+
           setPages(prev => prev.map((p, idx) => idx === pageIndex ? { 
             ...p, 
-            error: "Lỗi dịch thuật", 
+            error: isQuotaExceeded ? "Hết hạn mức API" : "Lỗi dịch thuật", 
             isTranslating: false 
           } : p));
-          setErrorNotification({ 
-            message: `Gặp lỗi khi dịch trang ${pageIndex + 1}. Bạn có thể thử lại sau.`, 
-            index: pageIndex 
-          });
+
+          if (isQuotaExceeded) {
+            triggerNotification("Hết hạn mức API (Quota exceeded). Vui lòng đợi một lát hoặc thử lại sau.", 'error');
+            setIsAutoTranslating(false); // Stop auto-translation to prevent further errors
+          } else {
+            triggerNotification(`Gặp lỗi khi dịch trang ${pageIndex + 1}.`, 'error', pageIndex);
+          }
         }
       } else {
          setPages(prev => prev.map((p, idx) => idx === pageIndex ? { 
@@ -947,37 +962,44 @@ export default function App() {
         </AnimatePresence>
       </main>
 
-      {/* Error Notification Popup */}
+      {/* Global Notification Popup */}
       <AnimatePresence>
-        {errorNotification && (
+        {notification && (
           <motion.div
             initial={{ opacity: 0, scale: 0.9, y: 50 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 50 }}
             className="fixed bottom-12 left-1/2 -translate-x-1/2 z-[1000] w-full max-w-md px-4"
           >
-            <div className="bg-red-600 text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between gap-4 border border-white/10">
+            <div className={`
+              ${notification.type === 'error' ? 'bg-red-600' : notification.type === 'success' ? 'bg-green-600' : 'bg-gray-800'}
+              text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between gap-4 border border-white/10
+            `}>
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-                  <AlertCircle size={18} />
+                  {notification.type === 'error' ? <AlertCircle size={18} /> : notification.type === 'success' ? <CheckCircle2 size={18} /> : <FileText size={18} />}
                 </div>
                 <div>
-                  <p className="font-bold text-sm">Lỗi dịch thuật</p>
-                  <p className="text-xs opacity-90 leading-tight">{errorNotification.message}</p>
+                  <p className="font-bold text-sm">
+                    {notification.type === 'error' ? 'Thông báo lỗi' : notification.type === 'success' ? 'Thành công' : 'Thông tin'}
+                  </p>
+                  <p className="text-xs opacity-90 leading-tight">{notification.message}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {notification.index !== undefined && (
+                  <button 
+                    onClick={() => {
+                      setCurrentPage(notification.index!);
+                      setNotification(null);
+                    }}
+                    className="px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-xs font-bold uppercase tracking-widest transition-colors whitespace-nowrap"
+                  >
+                    Đến trang
+                  </button>
+                )}
                 <button 
-                  onClick={() => {
-                    setCurrentPage(errorNotification.index);
-                    setErrorNotification(null);
-                  }}
-                  className="px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-xs font-bold uppercase tracking-widest transition-colors whitespace-nowrap"
-                >
-                  Đến trang
-                </button>
-                <button 
-                  onClick={() => setErrorNotification(null)}
+                  onClick={() => setNotification(null)}
                   className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
                   aria-label="Đóng"
                 >
