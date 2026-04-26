@@ -54,6 +54,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [editingText, setEditingText] = useState("");
+  const [errorNotification, setErrorNotification] = useState<{message: string, index: number} | null>(null);
 
   const translatedCount = pages.filter(p => p.translatedText).length;
   const overallProgress = pages.length > 0 ? (translatedCount / pages.length) * 100 : 0;
@@ -223,6 +224,13 @@ export default function App() {
     setPages(prev => prev.map((p, i) => i === index ? { ...p, isEditing: false } : p));
   };
 
+  useEffect(() => {
+    if (errorNotification) {
+      const timer = setTimeout(() => setErrorNotification(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [errorNotification]);
+
   // Translation worker
   useEffect(() => {
     if (state !== 'reader') return;
@@ -253,6 +261,10 @@ export default function App() {
             error: "Lỗi dịch thuật", 
             isTranslating: false 
           } : p));
+          setErrorNotification({ 
+            message: `Gặp lỗi khi dịch trang ${pageIndex + 1}. Bạn có thể thử lại sau.`, 
+            index: pageIndex 
+          });
         }
       } else {
          setPages(prev => prev.map((p, idx) => idx === pageIndex ? { 
@@ -935,6 +947,47 @@ export default function App() {
         </AnimatePresence>
       </main>
 
+      {/* Error Notification Popup */}
+      <AnimatePresence>
+        {errorNotification && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 50 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 50 }}
+            className="fixed bottom-12 left-1/2 -translate-x-1/2 z-[1000] w-full max-w-md px-4"
+          >
+            <div className="bg-red-600 text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between gap-4 border border-white/10">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                  <AlertCircle size={18} />
+                </div>
+                <div>
+                  <p className="font-bold text-sm">Lỗi dịch thuật</p>
+                  <p className="text-xs opacity-90 leading-tight">{errorNotification.message}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => {
+                    setCurrentPage(errorNotification.index);
+                    setErrorNotification(null);
+                  }}
+                  className="px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-xs font-bold uppercase tracking-widest transition-colors whitespace-nowrap"
+                >
+                  Đến trang
+                </button>
+                <button 
+                  onClick={() => setErrorNotification(null)}
+                  className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+                  aria-label="Đóng"
+                >
+                  <XCircle size={16} />
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
